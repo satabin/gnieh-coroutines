@@ -1,0 +1,4 @@
+<plugin>
+  <name>coroutines</name>
+  <classname>gnieh.coroutines.plugin.CoroutinesPlugin</classname>
+</plugin>
