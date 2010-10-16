@@ -22,7 +22,7 @@ object Coroutine {
 }
 
 abstract class Coroutine[Param, Ret] {
-  private[coroutines] var fun: Param => Ret //@cpsParam[Ret,Ret]
+  protected var fun: Param => Ret //@cpsParam[Ret,Ret]
   def resume(p: Param): Ret = {
     //	  reset(fun(p))
     fun(p)

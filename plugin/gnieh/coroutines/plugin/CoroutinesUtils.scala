@@ -12,11 +12,15 @@ trait CoroutinesUtils {
   var verbose: Boolean = false
   def vprintln(x: => Any): Unit = if (verbose) println(x)
 
-  lazy val Couroutine = definitions.getClass("gnieh.coroutines.Coroutine")
+  lazy val Coroutine = definitions.getClass("gnieh.coroutines.Coroutine")
   
   lazy val ModCoroutines = definitions.getModule("gnieh.coroutines")
   lazy val MethYld = definitions.getMember(ModCoroutines, "yld")
   lazy val MethCreate = definitions.getMember(ModCoroutines, "create")
   lazy val MethWrap = definitions.getMember(ModCoroutines, "wrap")
+  
+  lazy val ModContinuations = definitions.getModule("scala.util.continuations")
+  lazy val MethShift = definitions.getMember(ModContinuations, "shift")
+  lazy val MethReset = definitions.getMember(ModContinuations, "reset")
 
 }
