@@ -5,7 +5,7 @@ Introduction
 ------------
 
 Gnieh Coroutines is a [Scala][1] library and a compiler plugin which makes it possible to use coroutines in Scala.
-The design is based on coroutines in LUA ([Revisiting Coroutines][2][Coroutines in LUA][3]) and natively implements asymmetric coroutines.
+The design is based on coroutines in LUA ([Revisiting Coroutines][2], [Coroutines in LUA][3]) and natively implements asymmetric coroutines.
 
 This project is still at an really early stage and is not finished yet. Any comments are welcome.
 
