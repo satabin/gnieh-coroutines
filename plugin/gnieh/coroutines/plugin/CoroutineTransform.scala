@@ -34,9 +34,16 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
 
   class CoroutinesTransformer(unit: CompilationUnit) extends TypingTransformer(unit) {
 
+    var clazz: Symbol = NoSymbol
     var inCoroutine = false
 
     override def transform(tree: Tree): Tree = tree match {
+      case _: ClassDef =>
+        val oldClazz = clazz
+        clazz = tree.symbol
+        val res = super.transform(tree)
+        clazz = oldClazz
+        res
       case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethCreate) =>
         inCoroutine = true
 
@@ -80,8 +87,9 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
 
       // the anonymous class definition
       val newClass = create.newAnonymousClass(create.pos)
+      newClass.owner = clazz
 
-      val funSym = newClass.newVariable(fun.pos, "fun") setFlag (OVERRIDE)
+      val funSym = newClass.newVariable(fun.pos, "fun") setFlag (PRIVATE | LOCAL)
       funSym setInfo appliedType(FunctionClass(1).tpe, paramType :: retType :: Nil)
 
       val reset =
@@ -97,25 +105,36 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
             Ident(retType.typeSymbol) :: Ident(retType.typeSymbol) :: Nil),
           transform(fun.body) :: Nil)
 
-      val body =
-        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.typed(reset))) :: Nil
-      val parent = AppliedTypeTree(Ident(Coroutine),
-        Ident(paramType.typeSymbol) :: Ident(retType.typeSymbol) :: Nil)
-
+      // the type info
       newClass setInfo ClassInfoType(
         appliedType(Coroutine.tpe,
-          paramType :: retType :: Nil) :: Nil,
+          paramType :: retType :: Nil) :: ScalaObjectClass.tpe :: Nil,
         new Scope, newClass)
 
       newClass.info.decls enter funSym
 
-      val getter = funSym.newGetter
-      val setter = newClass.newMethod(fun.pos, nme.getterToSetter(getter.name)) setFlag (ACCESSOR)
+      val getter = funSym.newGetter setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
+//      getter.owner = newClass
+      val setter = newClass.newMethod(fun.pos, nme.getterToSetter(getter.name)) setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
+//      setter.owner = newClass
       setter.setInfo(
-        MethodType(funSym.cloneSymbol(setter).setFlag(PARAM).resetFlag(MUTABLE | OVERRIDE) :: Nil,
+        MethodType(funSym.cloneSymbol(setter).setFlag(PARAM).resetFlag(MUTABLE | PRIVATE | LOCAL) :: Nil,
           UnitClass.tpe))
       newClass.info.decls enter getter
       newClass.info.decls enter setter
+
+      // the concrete members
+      val funDef =
+        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.typed(reset)))
+        
+      val getterDef = atOwner(newClass) {
+        DefDef(getter, localTyper.typed(Select(This(newClass), funSym)))
+      }
+      val setterDef = atOwner(newClass) {
+        DefDef(setter, localTyper.typed{Assign(Select(This(newClass), funSym), Ident(setter.info.params.head))})
+      }
+      val body =
+        funDef :: getterDef :: setterDef :: Nil
 
       val classDef =
         ClassDef(newClass, NoMods, List(List()), List(List()), body, fun.pos)
