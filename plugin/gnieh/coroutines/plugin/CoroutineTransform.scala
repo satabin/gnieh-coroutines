@@ -32,7 +32,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       debug.traverse(unit.body)
     }
   }
-  
+
   object debug extends Traverser {
     override def traverse(tree: Tree) = tree match {
       case t if t.hasSymbol && t.symbol == NoSymbol =>
@@ -125,7 +125,6 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
         case _ => (Nil, fun.body)
       }
 
-      
       // the type info
       newClass setInfo ClassInfoType(
         appliedType(Coroutine.tpe,
@@ -143,7 +142,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       newClass.info.decls enter setter
 
       // the concrete members
-      
+
       val reset =
         Apply(
           TypeApply(
@@ -155,15 +154,17 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
                 newTermName("continuations")),
               newTermName("reset")),
             Ident(UnitClass) :: Ident(corret.typeSymbol) :: Nil),
-          transformTrees(funBody) ::: transformReturn(ret.symbol, ret) :: Nil)
+          Block(transformTrees(funBody) ::: transformReturn(ret.symbol, ret) :: Nil: _*) :: Nil)
+
+      println(reset)
 
       val funDef =
-        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.atOwner(funSym).typed(reset)))
+        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper/*.atOwner(funSym)*/.typed(reset)))
       funDef.rhs.symbol.owner = funSym
-        new ForeachTreeTraverser(tree => {
-         if(tree.isDef || tree.isInstanceOf[Function] && tree.symbol != NoSymbol)
-           tree.symbol.owner = funDef.rhs.symbol
-        }).traverse(reset)
+      new ForeachTreeTraverser(tree => {
+        if (tree.isDef || tree.isInstanceOf[Function] && tree.symbol != NoSymbol)
+          tree.symbol.owner = funDef.rhs.symbol
+      }).traverse(reset)
 
       val getterDef = atOwner(newClass) {
         DefDef(getter, localTyper.typed(Select(This(newClass), funSym)))
@@ -244,7 +245,9 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      * </pre>
      */
     def transformYield(arg: Tree): Tree =
-      createShift(corparam, corret, arg)
+      localTyper.typed {
+        createShift(corparam, corret, arg)
+      }
 
     /**
      * Transforms a return (last instruction) to the corresponding shift block
@@ -298,7 +301,9 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
         val transformedElse = trans1(elsep)
         treeCopy.If(i, transform(cond), transformedThen, transformedElse)
       case _ =>
-        createShift(corret, arg)
+        localTyper.typed {
+          createShift(corret, arg)
+        }
     }
 
     private def createShift(kparam: Type, kret: Type, value: Tree): Apply =
@@ -321,8 +326,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
                 Ident(inCoroutine.name + "$k") :: Nil),
               transform(value))) :: Nil)
       }
-    
-    
+
     private def createShift(kret: Type, value: Tree): Apply =
       atPos(value.pos) {
         Apply(
