@@ -21,7 +21,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
   val phaseName: String = "coroutines"
 
   val coroutineName = "coroutine$"
-  var coroutineCount = 0
+  var coroutineCount = -1
 
   protected def newTransformer(unit: CompilationUnit): Transformer =
     new CoroutinesTransformer(unit)
@@ -34,15 +34,20 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
 
   class CoroutinesTransformer(unit: CompilationUnit) extends TypingTransformer(unit) {
 
-    var clazz: Symbol = NoSymbol
+    var owner: Symbol = NoSymbol
     var inCoroutine = false
 
+    protected def newCoroutineClass(pos: Position) = {
+      coroutineCount += 1
+      owner.newClass(pos, newTypeName(coroutineName + coroutineCount))
+    }
+
     override def transform(tree: Tree): Tree = tree match {
-      case _: ClassDef =>
-        val oldClazz = clazz
-        clazz = tree.symbol
+      case _: ClassDef | _: ModuleDef | _: DefDef =>
+        val oldOwner = owner
+        owner = tree.symbol
         val res = super.transform(tree)
-        clazz = oldClazz
+        owner = oldOwner
         res
       case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethCreate) =>
         inCoroutine = true
@@ -53,6 +58,17 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
         val result = atPhase(currentRun.phaseNamed("typer")) {
           localTyper.typed(
             transformCreate(tree.symbol, fun))
+        }
+
+        inCoroutine = false
+        result
+      case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethWrap) =>
+        inCoroutine = true
+
+        val result = atPhase(currentRun.phaseNamed("typer")) {
+          localTyper.typed(
+            transformWrap(tree.symbol, fun)
+          )
         }
 
         inCoroutine = false
@@ -86,8 +102,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       }
 
       // the anonymous class definition
-      val newClass = create.newAnonymousClass(create.pos)
-      newClass.owner = clazz
+      val newClass = newCoroutineClass(create.pos) setFlag(FINAL)
 
       val funSym = newClass.newVariable(fun.pos, "fun") setFlag (PRIVATE | LOCAL)
       funSym setInfo appliedType(FunctionClass(1).tpe, paramType :: retType :: Nil)
@@ -114,9 +129,8 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       newClass.info.decls enter funSym
 
       val getter = funSym.newGetter setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
-//      getter.owner = newClass
       val setter = newClass.newMethod(fun.pos, nme.getterToSetter(getter.name)) setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
-//      setter.owner = newClass
+
       setter.setInfo(
         MethodType(funSym.cloneSymbol(setter).setFlag(PARAM).resetFlag(MUTABLE | PRIVATE | LOCAL) :: Nil,
           UnitClass.tpe))
@@ -125,13 +139,14 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
 
       // the concrete members
       val funDef =
-        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.typed(reset)))
-        
+        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.atOwner(newClass).typed(reset)))
+      funDef.rhs.symbol.owner = funSym
+
       val getterDef = atOwner(newClass) {
         DefDef(getter, localTyper.typed(Select(This(newClass), funSym)))
       }
       val setterDef = atOwner(newClass) {
-        DefDef(setter, localTyper.typed{Assign(Select(This(newClass), funSym), Ident(setter.info.params.head))})
+        DefDef(setter, localTyper.typed { Assign(Select(This(newClass), funSym), Ident(setter.info.params.head)) })
       }
       val body =
         funDef :: getterDef :: setterDef :: Nil
@@ -139,11 +154,53 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       val classDef =
         ClassDef(newClass, NoMods, List(List()), List(List()), body, fun.pos)
 
-      println(classDef)
+      // the anonymous class instantiation
+      val instance = atPos(fun.pos) {
+        Apply(Select(New(TypeTree(newClass.tpe)), nme.CONSTRUCTOR), Nil)
+      }
 
-      // TODO the anonymous class instantiation
+      Block(classDef, instance)
+    }
 
-      Block(classDef)
+    /**
+     * Transforms a call to the wrap method to the corresponding instantiation
+     * <pre>
+     * coroutines.wrap {
+     *   (p: Param) => block
+     * }
+     * </pre>
+     * is transformed to
+     * <pre>
+     * {
+     *   val co = new Coroutine[Param: Ret] {
+     *     protected var fun = (p: Param) => reset { block }
+     *   }
+     *   (p: Param) => co.resume(p)
+     * }
+     * </pre>
+     */
+    def transformWrap(wrap: Symbol, fun: Function): Tree = {
+      // the associated coroutine
+      val cor = transformCreate(wrap, fun)
+
+      // the closure
+      val corName = newTermName(coroutineName + coroutineCount)
+      val cl = atPos(wrap.pos) {
+        Function(ValDef(Modifiers(PARAM), "p", TypeTree(), EmptyTree) :: Nil,
+          Apply(
+            Select(
+              Ident(corName),
+              newTermName("resume")),
+            Ident("p") :: Nil))
+      }
+
+      println(cl)
+
+      val valCor = atPos(wrap.pos) {
+        ValDef(NoMods, corName, TypeTree(), cor)
+      }
+
+      Block(valCor, cl)
     }
 
     /**

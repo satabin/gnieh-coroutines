@@ -22,9 +22,8 @@ object Coroutine {
 }
 
 abstract class Coroutine[Param, Ret] {
-  protected var fun: Param => Ret //@cpsParam[Ret,Ret]
+  var fun: Param => Ret
   def resume(p: Param): Ret = {
-    //	  reset(fun(p))
     fun(p)
   }
 }
