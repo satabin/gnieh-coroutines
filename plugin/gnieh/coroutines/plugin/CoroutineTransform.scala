@@ -31,11 +31,12 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       newTransformer(unit) transformUnit unit
     }
   }
-
+  
   class CoroutinesTransformer(unit: CompilationUnit) extends TypingTransformer(unit) {
 
     var owner: Symbol = NoSymbol
     var inCoroutine = false
+    var hasYield = false
 
     protected def newCoroutineClass(pos: Position) = {
       coroutineCount += 1
@@ -43,7 +44,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
     }
 
     override def transform(tree: Tree): Tree = tree match {
-      case _: ClassDef | _: ModuleDef | _: DefDef =>
+      case _: ClassDef | _: ModuleDef | _: DefDef | _: ValDef =>
         val oldOwner = owner
         owner = tree.symbol
         val res = super.transform(tree)
@@ -67,12 +68,18 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
 
         val result = atPhase(currentRun.phaseNamed("typer")) {
           localTyper.typed(
-            transformWrap(tree.symbol, fun)
-          )
+            transformWrap(tree.symbol, fun))
         }
 
         inCoroutine = false
         result
+      case Apply(create, (block: Tree) :: Nil) if (create.symbol == MethYld) =>
+        if(!inCoroutine) {
+          unit.error(tree.pos, "coroutines.yld must be used in a coroutine declaration")
+          tree
+        } else {
+          transformYield(tree.symbol, block)
+        }
       case _ => super.transform(tree)
     }
 
@@ -102,7 +109,8 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       }
 
       // the anonymous class definition
-      val newClass = newCoroutineClass(create.pos) setFlag(FINAL)
+      val newClass = owner.newAnonymousClass(create.pos) setFlag FINAL
+        //newCoroutineClass(create.pos) setFlag (FINAL)
 
       val funSym = newClass.newVariable(fun.pos, "fun") setFlag (PRIVATE | LOCAL)
       funSym setInfo appliedType(FunctionClass(1).tpe, paramType :: retType :: Nil)
@@ -126,14 +134,13 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
           paramType :: retType :: Nil) :: ScalaObjectClass.tpe :: Nil,
         new Scope, newClass)
 
-      newClass.info.decls enter funSym
-
       val getter = funSym.newGetter setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
       val setter = newClass.newMethod(fun.pos, nme.getterToSetter(getter.name)) setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
 
       setter.setInfo(
         MethodType(funSym.cloneSymbol(setter).setFlag(PARAM).resetFlag(MUTABLE | PRIVATE | LOCAL) :: Nil,
           UnitClass.tpe))
+      newClass.info.decls enter funSym
       newClass.info.decls enter getter
       newClass.info.decls enter setter
 
@@ -216,8 +223,25 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      * }
      * </pre>
      */
-    def transformedYield() {
-
+    def transformYield(yld: Symbol, arg: Tree): Tree = {
+      EmptyTree
+    }
+    
+    /**
+     * Transforms a return (last instruction) to the corresponding shift block
+     * <pre>
+     * v
+     * </pre>
+     * is transformed to
+     * <pre>
+     * shift { k: (Unit => Unit) =>
+     *   fun = consumed
+     *   v
+     * }
+     * </pre>
+     */
+    def transformReturn(ret: Symbol, arg: Tree): Tree = {
+      EmptyTree
     }
 
   }
