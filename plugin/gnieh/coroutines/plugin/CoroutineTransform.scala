@@ -109,8 +109,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       }
 
       // the anonymous class definition
-      val newClass = owner.newAnonymousClass(create.pos) setFlag FINAL
-        //newCoroutineClass(create.pos) setFlag (FINAL)
+      val newClass = newCoroutineClass(create.pos) setFlag (FINAL)
 
       val funSym = newClass.newVariable(fun.pos, "fun") setFlag (PRIVATE | LOCAL)
       funSym setInfo appliedType(FunctionClass(1).tpe, paramType :: retType :: Nil)
