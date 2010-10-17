@@ -6,6 +6,30 @@ import scala.util.continuations._
 // how the code looks like once transformed
 object Test1 {
   def main(args: Array[String]) {
+    
+    /* original code:
+       val co = coroutines.create {
+         (_: Unit) => {
+           var i = 1
+           println("first time: " + i)
+           yld(i+1)
+           i += 1
+
+           println("second time: " + i)
+           i += 7
+           yld(i)
+           println("third time: " + i)
+
+           if (i < 0) {
+             i+3
+           } else {
+             yld(i)
+             i - 5
+           }
+         }
+       }
+     */
+    
     val co = new Coroutine[Unit, Int] {
       var fun: Unit => Int = (_: Unit) => {
         reset {
