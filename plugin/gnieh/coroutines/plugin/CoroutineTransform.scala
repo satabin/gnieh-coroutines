@@ -31,12 +31,13 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       newTransformer(unit) transformUnit unit
     }
   }
-  
+
   class CoroutinesTransformer(unit: CompilationUnit) extends TypingTransformer(unit) {
 
     var owner: Symbol = NoSymbol
-    var inCoroutine = false
-    var hasYield = false
+    var inCoroutine: Symbol = null
+    var corparam: Type = null
+    var corret: Type = null
 
     protected def newCoroutineClass(pos: Position) = {
       coroutineCount += 1
@@ -51,34 +52,24 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
         owner = oldOwner
         res
       case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethCreate) =>
-        inCoroutine = true
 
         // transform the call to the create method to an instantiation of the
         // Coroutine class
-        localTyper.context1.reportGeneralErrors = true
-        val result = atPhase(currentRun.phaseNamed("typer")) {
+        atPhase(currentRun.phaseNamed("typer")) {
           localTyper.typed(
             transformCreate(tree.symbol, fun))
         }
-
-        inCoroutine = false
-        result
       case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethWrap) =>
-        inCoroutine = true
-
-        val result = atPhase(currentRun.phaseNamed("typer")) {
+        atPhase(currentRun.phaseNamed("typer")) {
           localTyper.typed(
             transformWrap(tree.symbol, fun))
         }
-
-        inCoroutine = false
-        result
       case Apply(create, (block: Tree) :: Nil) if (create.symbol == MethYld) =>
-        if(!inCoroutine) {
+        if (inCoroutine == null) {
           unit.error(tree.pos, "coroutines.yld must be used in a coroutine declaration")
           tree
         } else {
-          transformYield(tree.symbol, block)
+          transformYield(block)
         }
       case _ => super.transform(tree)
     }
@@ -97,40 +88,38 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      * }
      * </pre>
      */
-    def transformCreate(create: Symbol, fun: Function): Tree = {
+    def transformCreate(create: Symbol, fun: Function): Block = {
 
-      val (paramType, retType) = fun.tpe match {
+      fun.tpe match {
         //case MethodType(p :: Nil, ret) => (p, ret)
         case TypeRef(_, f, p :: ret :: Nil) if f == FunctionClass(1) =>
-          (p, ret)
+          corparam = p
+          corret = ret
         case _ =>
           unit.error(fun.pos, "A function is expected. found: " + fun.tpe)
-          (ErrorType, ErrorType)
+          corparam = ErrorType
+          corret = ErrorType
       }
 
       // the anonymous class definition
       val newClass = newCoroutineClass(create.pos) setFlag (FINAL)
 
+      val oldCor = inCoroutine
+      inCoroutine = newClass
+
       val funSym = newClass.newVariable(fun.pos, "fun") setFlag (PRIVATE | LOCAL)
-      funSym setInfo appliedType(FunctionClass(1).tpe, paramType :: retType :: Nil)
+      funSym setInfo appliedType(FunctionClass(1).tpe, corparam :: corret :: Nil)
 
-      val reset =
-        Apply(
-          TypeApply(
-            Select(
-              Select(
-                Select(
-                  Ident("scala"),
-                  newTermName("util")),
-                newTermName("continuations")),
-              newTermName("reset")),
-            Ident(retType.typeSymbol) :: Ident(retType.typeSymbol) :: Nil),
-          transform(fun.body) :: Nil)
+      val (funBody, ret) = fun.body match {
+        case Block(instr, ret) => (instr, ret)
+        case _ => (Nil, fun.body)
+      }
 
+      
       // the type info
       newClass setInfo ClassInfoType(
         appliedType(Coroutine.tpe,
-          paramType :: retType :: Nil) :: ScalaObjectClass.tpe :: Nil,
+          corparam :: corret :: Nil) :: ScalaObjectClass.tpe :: Nil,
         new Scope, newClass)
 
       val getter = funSym.newGetter setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
@@ -144,6 +133,22 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       newClass.info.decls enter setter
 
       // the concrete members
+      
+      val reset =
+        Apply(
+          TypeApply(
+            Select(
+              Select(
+                Select(
+                  Ident("scala"),
+                  newTermName("util")),
+                newTermName("continuations")),
+              newTermName("reset")),
+            Ident(UnitClass) :: Ident(corret.typeSymbol) :: Nil),
+          transformTrees(funBody) ::: transformReturn(ret.symbol, ret) :: Nil)
+
+      println(reset)
+      
       val funDef =
         ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.atOwner(newClass).typed(reset)))
       funDef.rhs.symbol.owner = funSym
@@ -165,7 +170,11 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
         Apply(Select(New(TypeTree(newClass.tpe)), nme.CONSTRUCTOR), Nil)
       }
 
-      Block(classDef, instance)
+      val result = Block(classDef, instance)
+
+      inCoroutine = oldCor
+
+      result
     }
 
     /**
@@ -190,7 +199,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       val cor = transformCreate(wrap, fun)
 
       // the closure
-      val corName = newTermName(coroutineName + coroutineCount)
+      val corName = cor.stats.head.symbol.name
       val cl = atPos(wrap.pos) {
         Function(ValDef(Modifiers(PARAM), "p", TypeTree(), EmptyTree) :: Nil,
           Apply(
@@ -222,10 +231,9 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      * }
      * </pre>
      */
-    def transformYield(yld: Symbol, arg: Tree): Tree = {
-      EmptyTree
-    }
-    
+    def transformYield(arg: Tree): Tree =
+      createShift(corparam, corret, arg)
+
     /**
      * Transforms a return (last instruction) to the corresponding shift block
      * <pre>
@@ -238,10 +246,91 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      *   v
      * }
      * </pre>
+     * if the return value is an if
+     * <pre>
+     * if(cond) {
+     *   ...
+     *   v1
+     * } else {
+     *   ...
+     *   v2
+     * }
+     * </pre>
+     * it is transformed to
+     * <pre>
+     * if(cond) {
+     *   ...
+     *   shift { k: (Unit => Unit) =>
+     *     fun = consumed
+     *     v1
+     *   }
+     * } else {
+     *   ...
+     *   shift { k: (Unit => Unit) =>
+     *     fun = consumed
+     *     v2
+     *   }
+     * }
+     * </pre>
      */
-    def transformReturn(ret: Symbol, arg: Tree): Tree = {
-      EmptyTree
+    def transformReturn(ret: Symbol, arg: Tree): Tree = arg match {
+      case i@If(cond, thenp, elsep) =>
+        def trans1(tree: Tree) = {
+          tree match {
+            case Block(stats, ret) =>
+              Block(transformTrees(stats) ::: transformReturn(ret.symbol, ret) :: Nil: _*)
+            case _ => transformReturn(ret, thenp)
+          }
+        }
+        val transformedThen = trans1(thenp)
+        val transformedElse = trans1(elsep)
+        treeCopy.If(i, transform(cond), transformedThen, transformedElse)
+      case _ =>
+        createShift(corret, arg)
     }
+
+    private def createShift(kparam: Type, kret: Type, value: Tree): Apply =
+      atPos(value.pos) {
+        Apply(
+          TypeApply(
+            Select(
+              Select(
+                Select(
+                  Ident("scala"),
+                  newTermName("util")),
+                newTermName("continuations")),
+              newTermName("shift")),
+            Ident(kparam.typeSymbol) :: Ident(kret.typeSymbol) :: Ident(kret.typeSymbol) :: Nil),
+          Function(
+            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "k"), TypeTree(), EmptyTree) :: Nil,
+            Block(
+              Apply(
+                Ident(inCoroutine.info.member(nme.getterToSetter("fun"))),
+                Ident(inCoroutine.name + "k") :: Nil),
+              transform(value))) :: Nil)
+      }
+    
+    
+    private def createShift(kret: Type, value: Tree): Apply =
+      atPos(value.pos) {
+        Apply(
+          TypeApply(
+            Select(
+              Select(
+                Select(
+                  Ident("scala"),
+                  newTermName("util")),
+                newTermName("continuations")),
+              newTermName("shift")),
+            Ident(UnitClass) :: Ident(UnitClass) :: Ident(kret.typeSymbol) :: Nil),
+          Function(
+            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "k"), TypeTree(), EmptyTree) :: Nil,
+            Block(
+              Apply(
+                Ident(inCoroutine.info.member(nme.getterToSetter("fun"))),
+                Select(This(inCoroutine), newTermName("shot")) :: Nil),
+              transform(value))) :: Nil)
+      }
 
   }
 }
