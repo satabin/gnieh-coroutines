@@ -29,6 +29,16 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
   def newPhase(prev: Phase) = new StdPhase(prev) {
     def apply(unit: CompilationUnit) {
       newTransformer(unit) transformUnit unit
+      debug.traverse(unit.body)
+    }
+  }
+  
+  object debug extends Traverser {
+    override def traverse(tree: Tree) = tree match {
+      case t if t.hasSymbol && t.symbol == NoSymbol =>
+        println(t + " =====> " + t.symbol)
+        super.traverse(t)
+      case _ => super.traverse(tree)
     }
   }
 
@@ -147,11 +157,13 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
             Ident(UnitClass) :: Ident(corret.typeSymbol) :: Nil),
           transformTrees(funBody) ::: transformReturn(ret.symbol, ret) :: Nil)
 
-      println(reset)
-      
       val funDef =
-        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.atOwner(newClass).typed(reset)))
+        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.atOwner(funSym).typed(reset)))
       funDef.rhs.symbol.owner = funSym
+        new ForeachTreeTraverser(tree => {
+         if(tree.isDef || tree.isInstanceOf[Function] && tree.symbol != NoSymbol)
+           tree.symbol.owner = funDef.rhs.symbol
+        }).traverse(reset)
 
       val getterDef = atOwner(newClass) {
         DefDef(getter, localTyper.typed(Select(This(newClass), funSym)))
@@ -302,11 +314,11 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
               newTermName("shift")),
             Ident(kparam.typeSymbol) :: Ident(kret.typeSymbol) :: Ident(kret.typeSymbol) :: Nil),
           Function(
-            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "k"), TypeTree(), EmptyTree) :: Nil,
+            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "$k"), TypeTree(), EmptyTree) :: Nil,
             Block(
               Apply(
                 Ident(inCoroutine.info.member(nme.getterToSetter("fun"))),
-                Ident(inCoroutine.name + "k") :: Nil),
+                Ident(inCoroutine.name + "$k") :: Nil),
               transform(value))) :: Nil)
       }
     
@@ -324,7 +336,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
               newTermName("shift")),
             Ident(UnitClass) :: Ident(UnitClass) :: Ident(kret.typeSymbol) :: Nil),
           Function(
-            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "k"), TypeTree(), EmptyTree) :: Nil,
+            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "$k"), TypeTree(), EmptyTree) :: Nil,
             Block(
               Apply(
                 Ident(inCoroutine.info.member(nme.getterToSetter("fun"))),
