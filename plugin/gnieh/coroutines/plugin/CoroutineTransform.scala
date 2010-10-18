@@ -160,7 +160,7 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
           Block(transformTrees(funBody) ::: transformReturn(ret.symbol, ret) :: Nil: _*) :: Nil)
 
       val funDef =
-        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper /*.atOwner(funSym)*/ .typed(reset)))
+        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.typed(reset)))
       funDef.rhs.symbol.owner = funSym
       new ForeachTreeTraverser(tree => {
         if (tree.isDef || tree.isInstanceOf[Function] && tree.symbol != NoSymbol)
@@ -178,6 +178,8 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
 
       val classDef =
         ClassDef(newClass, NoMods, List(List()), List(List()), body, fun.pos)
+        
+        println(classDef)
 
       // the anonymous class instantiation
       val instance = atPos(fun.pos) {
@@ -245,8 +247,6 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
               newTermName("resume")),
             Ident("p") :: Nil))
       }
-
-      println(cl)
 
       val valCor = atPos(wrap.pos) {
         ValDef(corSym, cor)
@@ -321,12 +321,16 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
           tree match {
             case Block(stats, ret) =>
               Block(transformTrees(stats) ::: transformReturn(ret.symbol, ret) :: Nil: _*)
-            case _ => transformReturn(ret, thenp)
+            case _ => transformReturn(ret, tree)
           }
         }
         val transformedThen = trans1(thenp)
         val transformedElse = trans1(elsep)
-        treeCopy.If(i, transform(cond), transformedThen, transformedElse)
+        localTyper.typed{
+          atPos(i.pos){
+            If(transform(cond), transformedThen, transformedElse)
+          }
+        }
       case _ =>
         localTyper.typed {
           createShift(corret, arg)

@@ -22,5 +22,10 @@ trait CoroutinesUtils {
   lazy val ModContinuations = definitions.getModule("scala.util.continuations")
   lazy val MethShift = definitions.getMember(ModContinuations, "shift")
   lazy val MethReset = definitions.getMember(ModContinuations, "reset")
+  
+  def printlnr[T](o: T): T = {
+    println(o)
+    o
+  }
 
 }
