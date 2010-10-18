@@ -17,6 +17,8 @@ There are two to create and use coroutines:
 *   coroutines.create: create and consume the coroutine object itself
 *   coroutines.wrap: create the coroutine and wrap it into a closure that takes the same parameter as the resume method
 
+For example
+
     import gnieh._
     val co = coroutines.create {
       (i: Int) => {
