@@ -65,9 +65,9 @@ TODOs
 -----
 
 *   Support for coroutines.yld in method not directly wrapped in the coroutine:
-   *   add an implicit parameter to the method passing the current coroutine
+*      add an implicit parameter to the method passing the current coroutine
 *   Support recursive calls?
 
 [1]: http://www.scala-lang.org
 [2]: http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.58.4017 "Revisiting Coroutines, Ana Lúcia de Moura and Roberto Ierusalimschy"
-[3]: www.inf.puc-rio.br/~roberto/docs/corosblp.pdf "Coroutines in LUA, Ana Lúcia de Moura, Noemi Rodriguez, Roberto Ierusalimschy"
+[3]: http://www.inf.puc-rio.br/~roberto/docs/corosblp.pdf "Coroutines in LUA, Ana Lúcia de Moura, Noemi Rodriguez, Roberto Ierusalimschy"

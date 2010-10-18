@@ -11,6 +11,7 @@ abstract class Coroutine[Param, Ret] {
   }
 
   var fun: Param => Ret
+  
   def resume(p: Param): Ret = {
     fun(p)
   }
