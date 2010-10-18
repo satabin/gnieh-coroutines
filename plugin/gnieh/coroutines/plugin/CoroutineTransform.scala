@@ -69,12 +69,12 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
           localTyper.typed(
             transformCreate(tree.symbol, fun))
         }
-      case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethWrap) =>
+      case Apply(wrap, (fun: Function) :: Nil) if (wrap.symbol == MethWrap) =>
         atPhase(currentRun.phaseNamed("typer")) {
           localTyper.typed(
             transformWrap(tree.symbol, fun))
         }
-      case Apply(create, (block: Tree) :: Nil) if (create.symbol == MethYld) =>
+      case Apply(yld, (block: Tree) :: Nil) if (yld.symbol == MethYld) =>
         if (inCoroutine == null) {
           unit.error(tree.pos, "coroutines.yld must be used in a coroutine declaration")
           tree
@@ -99,6 +99,9 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      * </pre>
      */
     def transformCreate(create: Symbol, fun: Function): Block = {
+
+      val oldCorparam = corparam
+      val oldCorret = corret
 
       fun.tpe match {
         //case MethodType(p :: Nil, ret) => (p, ret)
@@ -156,10 +159,8 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
             Ident(UnitClass) :: Ident(corret.typeSymbol) :: Nil),
           Block(transformTrees(funBody) ::: transformReturn(ret.symbol, ret) :: Nil: _*) :: Nil)
 
-      println(reset)
-
       val funDef =
-        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper/*.atOwner(funSym)*/.typed(reset)))
+        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper /*.atOwner(funSym)*/ .typed(reset)))
       funDef.rhs.symbol.owner = funSym
       new ForeachTreeTraverser(tree => {
         if (tree.isDef || tree.isInstanceOf[Function] && tree.symbol != NoSymbol)
@@ -183,11 +184,11 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
         Apply(Select(New(TypeTree(newClass.tpe)), nme.CONSTRUCTOR), Nil)
       }
 
-      val result = Block(classDef, instance)
-
       inCoroutine = oldCor
+      corparam = oldCorparam
+      corret = oldCorret
 
-      result
+      Block(classDef, instance)
     }
 
     /**
@@ -208,16 +209,39 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      * </pre>
      */
     def transformWrap(wrap: Symbol, fun: Function): Tree = {
+
+      val oldCorparam = corparam
+      val oldCorret = corret
+
+      fun.tpe match {
+        //case MethodType(p :: Nil, ret) => (p, ret)
+        case TypeRef(_, f, p :: ret :: Nil) if f == FunctionClass(1) =>
+          corparam = p
+          corret = ret
+        case _ =>
+          unit.error(fun.pos, "A function is expected. found: " + fun.tpe)
+          corparam = ErrorType
+          corret = ErrorType
+      }
+
+      val corName = newTermName(coroutineName + (coroutineCount + 1))
+      val corSym = owner.newValue(wrap.pos, corName)
+      corSym.setInfo(appliedType(Coroutine.tpe, corparam :: corret :: Nil))
+      val oldOwner = owner
+      owner = corSym
+
       // the associated coroutine
       val cor = transformCreate(wrap, fun)
 
+      owner = oldOwner
+
       // the closure
-      val corName = cor.stats.head.symbol.name
+
       val cl = atPos(wrap.pos) {
         Function(ValDef(Modifiers(PARAM), "p", TypeTree(), EmptyTree) :: Nil,
           Apply(
             Select(
-              Ident(corName),
+              Ident(corSym),
               newTermName("resume")),
             Ident("p") :: Nil))
       }
@@ -225,8 +249,11 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       println(cl)
 
       val valCor = atPos(wrap.pos) {
-        ValDef(NoMods, corName, TypeTree(), cor)
+        ValDef(corSym, cor)
       }
+
+      corparam = oldCorparam
+      corret = oldCorret
 
       Block(valCor, cl)
     }
