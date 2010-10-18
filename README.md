@@ -13,8 +13,8 @@ Usage
 -----
 
 There are two to create and use coroutines:
- *  coroutines.create: create and consume the coroutine object itself
- *  coroutines.wrap: create the coroutine and wrap it into a closure that takes the same parameter as the resume method
+*  coroutines.create: create and consume the coroutine object itself
+*  coroutines.wrap: create the coroutine and wrap it into a closure that takes the same parameter as the resume method
 
     import gnieh._
     val co = coroutines.create {
@@ -49,8 +49,8 @@ Limitations
 -----------
 
 There are currently different limitations:
- *  coroutines.yld is only allowed in the function wrapped in the coroutine
- *  recursive calls to the function wrapped in the coroutine are not supported
+*  coroutines.yld is only allowed in the function wrapped in the coroutine
+*  recursive calls to the function wrapped in the coroutine are not supported
 
 Implementation
 --------------
@@ -60,9 +60,9 @@ Implementation
 TODOs
 -----
 
- *  Support for coroutines.yld in method not directly wrapped in the coroutine:
-  *  add an implicit parameter to the method passing the current coroutine
- *  Support recursive calls?
+*  Support for coroutines.yld in method not directly wrapped in the coroutine:
+ *  add an implicit parameter to the method passing the current coroutine
+*  Support recursive calls?
 
 [1]: http://www.scala-lang.org
 [2]: http://citeseerx.ist.psu.edu/viewdoc/summary?doi=10.1.1.58.4017 "Revisiting Coroutines, Ana Lúcia de Moura and Roberto Ierusalimschy"
