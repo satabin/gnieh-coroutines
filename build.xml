@@ -8,6 +8,8 @@
   <property name="library.build.dir" value="${build.dir}/library" />
   <property name="plugin.build.dir" value="${build.dir}/plugin" />
   <property name="dist.dir" value="dist" />
+  <property name="library.compile.options"
+            value="-Xplugin ${scala.home}/misc/scala-devel/plugins/continuations.jar -P:continuations:enable" />
 
   <path id="scala.classpath">
     <fileset dir="${scala.home}/lib">
@@ -44,7 +46,7 @@
     <scalac compilerpathref="scala.classpath"
             destdir="${library.build.dir}"
             srcdir="${library.src.dir}"
-            addparams="${compile.options}"
+            addparams="${library.compile.options} ${compile.options}"
             includes="**/*.scala">
       <classpath refid="build.classpath" />
     </scalac>

@@ -29,16 +29,6 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
   def newPhase(prev: Phase) = new StdPhase(prev) {
     def apply(unit: CompilationUnit) {
       newTransformer(unit) transformUnit unit
-      debug.traverse(unit.body)
-    }
-  }
-
-  object debug extends Traverser {
-    override def traverse(tree: Tree) = tree match {
-      case t if t.hasSymbol && t.symbol == NoSymbol =>
-        println(t + " =====> " + t.symbol)
-        super.traverse(t)
-      case _ => super.traverse(tree)
     }
   }
 
@@ -134,16 +124,6 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
           corparam :: corret :: Nil) :: ScalaObjectClass.tpe :: Nil,
         new Scope, newClass)
 
-      val getter = funSym.newGetter setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
-      val setter = newClass.newMethod(fun.pos, nme.getterToSetter(getter.name)) setFlag (ACCESSOR | OVERRIDE) resetFlag (PRIVATE | LOCAL)
-
-      setter.setInfo(
-        MethodType(funSym.cloneSymbol(setter).setFlag(PARAM).resetFlag(MUTABLE | PRIVATE | LOCAL) :: Nil,
-          UnitClass.tpe))
-      newClass.info.decls enter funSym
-      newClass.info.decls enter getter
-      newClass.info.decls enter setter
-
       // the concrete members
 
       val reset =
@@ -159,27 +139,22 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
             Ident(UnitClass) :: Ident(corret.typeSymbol) :: Nil),
           Block(transformTrees(funBody) ::: transformReturn(ret.symbol, ret) :: Nil: _*) :: Nil)
 
-      val funDef =
-        ValDef(funSym, treeCopy.Function(fun, fun.vparams, localTyper.typed(reset)))
-      funDef.rhs.symbol.owner = funSym
-      new ForeachTreeTraverser(tree => {
-        if (tree.isDef || tree.isInstanceOf[Function] && tree.symbol != NoSymbol)
-          tree.symbol.owner = funDef.rhs.symbol
-      }).traverse(reset)
+      val funSetter = newClass.info.member(nme.getterToSetter("fun"))
 
-      val getterDef = atOwner(newClass) {
-        DefDef(getter, localTyper.typed(Select(This(newClass), funSym)))
-      }
-      val setterDef = atOwner(newClass) {
-        DefDef(setter, localTyper.typed { Assign(Select(This(newClass), funSym), Ident(setter.info.params.head)) })
-      }
+      val funDef =
+        Apply(
+          Select(
+            This(newClass),
+            funSetter.name),
+          Function(fun.vparams, localTyper.typed(reset)).setPos(fun.pos) :: Nil)
+      
       val body =
-        funDef :: getterDef :: setterDef :: Nil
+        funDef :: Nil
 
       val classDef =
         ClassDef(newClass, NoMods, List(List()), List(List()), body, fun.pos)
-        
-        println(classDef)
+
+      println(classDef)
 
       // the anonymous class instantiation
       val instance = atPos(fun.pos) {
@@ -273,7 +248,11 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
      */
     def transformYield(arg: Tree): Tree =
       localTyper.typed {
-        createShift(corparam, corret, arg)
+        Apply(
+          Select(
+            This(inCoroutine),
+            newTermName("yld")),
+          transform(arg) :: Nil)
       }
 
     /**
@@ -326,58 +305,18 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
         }
         val transformedThen = trans1(thenp)
         val transformedElse = trans1(elsep)
-        localTyper.typed{
-          atPos(i.pos){
-            If(transform(cond), transformedThen, transformedElse)
-          }
+        atPos(i.pos) {
+          If(transform(cond), transformedThen, transformedElse)
         }
       case _ =>
         localTyper.typed {
-          createShift(corret, arg)
+          Apply(
+            Select(
+              This(inCoroutine),
+              newTermName("ret")),
+            transform(arg) :: Nil)
         }
     }
-
-    private def createShift(kparam: Type, kret: Type, value: Tree): Apply =
-      atPos(value.pos) {
-        Apply(
-          TypeApply(
-            Select(
-              Select(
-                Select(
-                  Ident("scala"),
-                  newTermName("util")),
-                newTermName("continuations")),
-              newTermName("shift")),
-            Ident(kparam.typeSymbol) :: Ident(kret.typeSymbol) :: Ident(kret.typeSymbol) :: Nil),
-          Function(
-            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "$k"), TypeTree(), EmptyTree) :: Nil,
-            Block(
-              Apply(
-                Ident(inCoroutine.info.member(nme.getterToSetter("fun"))),
-                Ident(inCoroutine.name + "$k") :: Nil),
-              transform(value))) :: Nil)
-      }
-
-    private def createShift(kret: Type, value: Tree): Apply =
-      atPos(value.pos) {
-        Apply(
-          TypeApply(
-            Select(
-              Select(
-                Select(
-                  Ident("scala"),
-                  newTermName("util")),
-                newTermName("continuations")),
-              newTermName("shift")),
-            Ident(UnitClass) :: Ident(UnitClass) :: Ident(kret.typeSymbol) :: Nil),
-          Function(
-            ValDef(Modifiers(PARAM), newTermName(inCoroutine.name + "$k"), TypeTree(), EmptyTree) :: Nil,
-            Block(
-              Apply(
-                Ident(inCoroutine.info.member(nme.getterToSetter("fun"))),
-                Select(This(inCoroutine), newTermName("shot")) :: Nil),
-              transform(value))) :: Nil)
-      }
 
   }
 }

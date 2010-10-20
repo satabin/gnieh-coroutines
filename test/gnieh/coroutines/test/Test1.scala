@@ -31,7 +31,7 @@ object Test1 {
      */
     
     val co = new Coroutine[Int, Int] {
-      var fun: Int => Int = (_: Int) => {
+      fun = (_: Int) => {
         reset {
           var i = 1
           println("first time: " + i)
