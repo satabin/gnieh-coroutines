@@ -21,6 +21,8 @@ import scala.util.continuations._
 class ShotCoroutineException(msg: String) extends Exception(msg)
 
 abstract class Coroutine[Param, Ret] {
+  
+  implicit val current = this
 
   object shot extends Function1[Param, Ret] {
     def apply(p: Param): Ret = throw new ShotCoroutineException("this coroutine has already been shot")
