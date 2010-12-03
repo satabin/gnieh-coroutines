@@ -60,34 +60,56 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       owner.newClass(pos, newTypeName(coroutineName + coroutineCount))
     }
 
-    override def transform(tree: Tree): Tree = tree match {
-      case _: ClassDef | _: ModuleDef | _: DefDef | _: ValDef =>
-        val oldOwner = owner
-        owner = tree.symbol
-        val res = super.transform(tree)
-        owner = oldOwner
-        res
-      case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethCreate) =>
+    override def transform(tree: Tree): Tree = try {
+      tree match {
+        case _: ClassDef | _: ModuleDef | _: DefDef | _: ValDef =>
+          val oldOwner = owner
+          owner = tree.symbol
+          val res = super.transform(tree)
+          owner = oldOwner
 
-        // transform the call to the create method to an instantiation of the
-        // Coroutine class
-        atPhase(currentRun.phaseNamed("typer")) {
-          localTyper.typed(
-            transformCreate(tree.symbol, fun))
-        }
-      case Apply(wrap, (fun: Function) :: Nil) if (wrap.symbol == MethWrap) =>
-        atPhase(currentRun.phaseNamed("typer")) {
-          localTyper.typed(
-            transformWrap(tree.symbol, fun))
-        }
-      case Apply(yld, (block: Tree) :: Nil) if (yld.symbol == MethYld) =>
-        if (inCoroutine == null) {
-          unit.error(tree.pos, "coroutines.yld must be used in a coroutine declaration")
-          tree
-        } else {
-          transformYield(block)
-        }
-      case _ => super.transform(tree)
+          res
+        case Apply(create, (fun: Function) :: Nil) if (create.symbol == MethCreate) =>
+
+          // transform the call to the create method to an instantiation of the
+          // Coroutine class
+          atPhase(currentRun.phaseNamed("typer")) {
+            localTyper.typed(
+              atPos(create.pos) {
+                transformCreate(tree.symbol, fun)
+              })
+          }
+        case Apply(wrap, (fun: Function) :: Nil) if (wrap.symbol == MethWrap) =>
+          atPhase(currentRun.phaseNamed("typer")) {
+            localTyper.typed(
+              atPos(wrap.pos) {
+                transformWrap(tree.symbol, fun)
+              })
+          }
+        case Apply(yld, (block: Tree) :: Nil) if (yld.symbol == MethYld) =>
+          if (inCoroutine == null) {
+            unit.error(tree.pos, "coroutines.yld must be used in a coroutine declaration")
+            tree
+          } else {
+            atPos(yld.pos) {
+              transformYield(block)
+            }
+          }
+        case Apply(Apply(cowhile, cond :: Nil), body :: Nil) if (cowhile.symbol == MethCowhile) =>
+          if (inCoroutine == null) {
+            unit.error(tree.pos, "coroutines.cowhile must be used in a coroutine declaration")
+            tree
+          } else {
+            atPos(cowhile.pos) {
+              transformCowhile(tree.symbol, cond, body)
+            }
+          }
+        case _ => super.transform(tree)
+      }
+    } catch {
+      case t =>
+        unit.error(tree.pos, t.getMessage)
+        tree
     }
 
     /**
@@ -126,9 +148,6 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
       val oldCor = inCoroutine
       inCoroutine = newClass
 
-      val funSym = newClass.newVariable(fun.pos, "fun") setFlag (PRIVATE | LOCAL)
-      funSym setInfo appliedType(FunctionClass(1).tpe, corparam :: corret :: Nil)
-
       val (funBody, ret) = fun.body match {
         case Block(instr, ret) => (instr, ret)
         case _ => (Nil, fun.body)
@@ -157,20 +176,21 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
 
       val funSetter = newClass.info.member(nme.getterToSetter("fun"))
 
+      val newFun = treeCopy.Function(fun, fun.vparams, localTyper.typed(reset))
+      newFun.symbol.owner = newClass
+
       val funDef =
         Apply(
           Select(
             This(newClass),
             funSetter.name),
-          Function(fun.vparams, localTyper.typed(reset)).setPos(fun.pos) :: Nil)
-      
+          newFun :: Nil)
+
       val body =
         funDef :: Nil
 
       val classDef =
         ClassDef(newClass, NoMods, List(List()), List(List()), body, fun.pos)
-
-      println(classDef)
 
       // the anonymous class instantiation
       val instance = atPos(fun.pos) {
@@ -332,6 +352,37 @@ abstract class CoroutinesTransform extends PluginComponent with TypingTransforme
               newTermName("ret")),
             transform(arg) :: Nil)
         }
+    }
+
+    /**
+     * Transforms a while statement:
+     * <pre>
+     * coroutines.cowhile(cond) {
+     *   block
+     * }
+     * </pre>
+     * is transformed to
+     * <pre>
+     * this.cowhile(cond) {
+     *   block
+     * }
+     * </pre>  
+     */
+    def transformCowhile(cowhile: Symbol, cond: Tree, body: Tree): Tree = {
+
+      val body1 = transform(body) match {
+        case Block(stmts, last) =>
+          Block(stmts ::: List(last), Literal(()))
+        case b => b
+      }
+      localTyper.typed {
+        Apply(
+          Apply(
+            Select(
+              This(inCoroutine),
+              newTermName("cowhile")),
+            List(transform(cond))), List(body1))
+      }
     }
 
   }

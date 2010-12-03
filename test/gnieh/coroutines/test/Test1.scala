@@ -8,7 +8,7 @@ object Test1 {
   def main(args: Array[String]) {
     
     /* original code:
-       val co = coroutines.create {
+       val co = create {
          (_: Int) => {
            var i = 1
            println("first time: " + i)

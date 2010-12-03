@@ -24,6 +24,14 @@ package object coroutines {
   def yld[T, V](v: T): V = throw new NoSuchMethodException("this code has to be compiled with the Scala coroutines plugin enabled")
   def create[Param, Ret](fun: Param => Ret): Coroutine[Param, Ret] = throw new NoSuchMethodException("this code has to be compiled with the Scala coroutines plugin enabled")
   def wrap[Param, Ret](fun: Param => Ret): Param => Ret = throw new NoSuchMethodException("this code has to be compiled with the Scala coroutines plugin enabled")
+  
+  def wrap[Param,Ret](cor: Coroutine[Param,Ret]) = (p: Param) => cor.resume(p)
+ 
+  /** this allows use of yield from within a while loop
+   * see http://stackoverflow.com/questions/2201882/implementing-yield-yield-return-using-scala-continuations/2218589#2218589
+   */
+  def cowhile[Ret](cond: Boolean)(body: =>Ret): Ret = throw new NoSuchMethodException("this code has to be compiled with the Scala coroutines plugin enabled")
+  
 }
 
 // vim: set ts=4 sw=4 et:

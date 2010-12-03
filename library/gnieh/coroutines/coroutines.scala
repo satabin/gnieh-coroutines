@@ -18,10 +18,12 @@ package gnieh.coroutines
 
 import scala.util.continuations._
 
+class corourinte[Param, Ret] extends StaticAnnotation
+
 class ShotCoroutineException(msg: String) extends Exception(msg)
 
 abstract class Coroutine[Param, Ret] {
-  
+
   implicit val current = this
 
   object shot extends Function1[Param, Ret] {
@@ -45,6 +47,19 @@ abstract class Coroutine[Param, Ret] {
     shift { k: (Unit => Unit) =>
       fun = shot
       v
+    }
+  }
+
+  def cpsunit: Unit @cps[Unit] = ()
+
+  /** this allows use of yield from within a while loop
+   * see http://stackoverflow.com/questions/2201882/implementing-yield-yield-return-using-scala-continuations/2218589#2218589
+   */
+  def cowhile(cond: => Boolean)(body: =>Param @cpsParam[Ret, Ret]):
+    Unit @cpsParam[Ret, Ret] = {
+    if (cond) {
+      body
+      cowhile(cond)(body)
     }
   }
 

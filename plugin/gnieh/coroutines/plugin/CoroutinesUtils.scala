@@ -34,6 +34,7 @@ trait CoroutinesUtils {
   lazy val MethYld = definitions.getMember(ModCoroutines, "yld")
   lazy val MethCreate = definitions.getMember(ModCoroutines, "create")
   lazy val MethWrap = definitions.getMember(ModCoroutines, "wrap")
+  lazy val MethCowhile = definitions.getMember(ModCoroutines, "cowhile")
   
   lazy val ModContinuations = definitions.getModule("scala.util.continuations")
   lazy val MethShift = definitions.getMember(ModContinuations, "shift")

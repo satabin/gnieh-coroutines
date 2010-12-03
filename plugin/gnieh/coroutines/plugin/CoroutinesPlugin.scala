@@ -31,9 +31,9 @@ class CoroutinesPlugin(val global: Global) extends Plugin {
   
   val phase = new CoroutinesTransform() { 
     val global = CoroutinesPlugin.this.global
-    val runsAfter = List("pickler")
+    val runsAfter = List("typer")
     // it must run before continuations are transformed
-    override val runsBefore = List("selectiveanf")
+//    override val runsBefore = List("selectiveanf")
   }
   
   
